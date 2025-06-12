@@ -11,8 +11,10 @@ Many exim instances acting as forwarders could be turned into open relays due to
 
 ## Overview of Sender Policy Framework (SPF): 
 SPF ensures that a server can use the domain set in the "Envelope From". The main benefit is for the actual owner of the domain who may receive unsolicited bounce emails.
+
 What happens when the "Enveloppe From" address is empty (=> for bounce emails) ? Then the EHLO/HELO domain is used for the SPF check.
-One issue with SPF is that it can get broken with email forwarders.
+
+One issue with SPF is that it can get broken with email forwarders. The goal of SRS is to bypass SPF when a bounce email is sent back to a forwarder.
 
 
 # Overview of Sender Rewrite Scheme
@@ -36,7 +38,7 @@ The ability to craft a poisoned SRS address. This requires to know the secret us
 The forwarder's server must accepts SRS addresses for inbound emails from an external IP.
 How to craft a poisoned SRS email?
 
-Issue: The Exim native implementation is weak and prone to bruteforce and replay attacks. https://www.exim.org/exim-html-current/doc/html/spec_html/ch-dkim_spf_srs_and_dmarc.html
+**Issue: The Exim native implementation is weak and prone to bruteforce and replay attacks.** Documentation: https://www.exim.org/exim-html-current/doc/html/spec_html/ch-dkim_spf_srs_and_dmarc.html
 
 Affected versions: 4.95 (experimental before) -> current (4.98.1 at the time of writing)
 
