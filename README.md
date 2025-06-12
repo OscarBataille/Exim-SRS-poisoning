@@ -10,33 +10,43 @@ Many exim instances acting as forwarders could be turned into open relays due to
 - Sender Rewriting Scheme SRS is a mechanism to allow Mail Transfer Agents (MTA) to forward emails without breaking SPF.
 
 ## Overview of Sender Policy Framework (SPF): 
-SPF ensures that a server can use the domain set in the "Envelope From". The main benefit is for the actual owner of the domain who may receive unsolicited bounce emails.
+SPF ensures that a server can use the domain set in the "Envelope From". What happens when the "Enveloppe From" address is empty (=> for bounce emails) ? Then the EHLO/HELO domain is used for the SPF check.
 
-What happens when the "Enveloppe From" address is empty (=> for bounce emails) ? Then the EHLO/HELO domain is used for the SPF check.
+The main benefit of SPF is for the actual owner of the domain who may receive unsolicited bounce emails. SPF ensures the validity of the bounce emails.
 
 One issue with SPF is that it can get broken with email forwarders. The goal of SRS is to bypass SPF when a bounce email is sent back to a forwarder.
 
 
-# Overview of Sender Rewrite Scheme
+# Overview of SRS - Sender Rewrite Scheme
 
-Example: 2 corporations communicate via email: corp1.com (Whatever MTA) <-> corp2.com (Exim MTA) -> corp2.net (Whatever MTA)
+Example: 2 corporations corp.com and corp2.com communicate via email.
+corp2.com is an MTA configured as a forwarder to corp2.net.
+
+Schema: corp1.com (Whatever MTA) <-> corp2.com (Exim MTA) -> corp2.net (Whatever MTA)
 
 alice@corp1.com sends an email to bob@corp2.com
-corp2.com (Exim MTA) forwards the email to bob@corp2.net. In order to pass the SPF checks on corp2.net, it rewrites the MAIL FROM address (enveloppe from) with SRS: SRS0=HHH=TT=corp1.com=alice@corp2.com. HHH is the SRS hash and TT the timestamp for validity.
-The email coming into corp2.net is checked with SPF. Since corp2.com is allowed to use that address, the SPF is validated.
-If the email coming into bob@corp2.net bounces, the @corp2.net MTA will send a bounce email to the SRS address (@corp2.com).
-corp2.com will check if the SRS address of the bounce message is correct (SRS-validation) and forward the bounce back to the sender's email (alice@corp1.com), with an empty Enveloppe From (since it is a bounce message).
-Attack: An external attacker wants to send a forged bounced email to alice@corp1.com, by making it appear to come from corp2.com. By sending a forged bounced email with a poisoned SRS address to corp2.com, the attacker will be able to use the corp2.com's MTA as an open relay and therefore bypass the SPF checks in corp1.com.
 
--> Effect on DMARC checks
+corp2.com (Exim MTA) forwards the email to bob@corp2.net. To pass the SPF checks, corp2.com rewrites the MAIL FROM address (enveloppe from) with SRS: SRS0=HHHH=TT=corp1.com=alice@corp2.com. HHHH is the SRS hash and TT the timestamp for validity.
+The email coming into corp2.net is checked with SPF, and since corp2.com is allowed to use that IP address, the SPF is validated.
+
+If the email coming into bob@corp2.net bounces, the @corp2.net MTA will send a bounce email to the SRS address (@corp2.com).
+**corp2.com will check if the SRS address of the bounce message is correct (SRS-validation) and forward the bounce back to the sender's email (alice@corp1.com), with an empty Enveloppe From (since it is a bounce message).**
+
+## Attack:
+An external attacker wants to send a forged bounced email to alice@corp1.com, by making it appear to come from corp2.com. By sending a forged bounced email with a poisoned SRS address to corp2.com, the attacker will be able to use the corp2.com's MTA as an open relay and therefore bypass the SPF checks in corp1.com.
+
+The necessary elements to perform this attack are:
+
+1. The ability to craft a poisoned SRS address. This requires to know the secret used to calculate the SRS hash, or to bruteforce it, or to replay a valid address that was intercepted.
+2. The forwarder's server must accept SRS addresses for inbound emails from an external IP.
+   
+## Effect on DMARC checks
 
 The email would pass the DMARC strict SPF alignment check, which would make it likely for our email to arrive in the victim's mailbox.
 If the corp2.com domain has a DMARC "relaxed" policy or a strict SPF alignment policy, then the email would bypass the checks. The email may also pass the strict DKIM alignment policy if corp2 automatically DKIM signs the forwarded emails.
-The necessary elements to perform this attack are
 
-The ability to craft a poisoned SRS address. This requires to know the secret used to calculate the SRS hash, or to bruteforce it, or to replay a valid address that was intercepted.
-The forwarder's server must accepts SRS addresses for inbound emails from an external IP.
-How to craft a poisoned SRS email?
+
+# How to craft a poisoned SRS email?
 
 **Issue: The Exim native implementation is weak and prone to bruteforce and replay attacks.** Documentation: https://www.exim.org/exim-html-current/doc/html/spec_html/ch-dkim_spf_srs_and_dmarc.html
 
@@ -72,7 +82,7 @@ Use 5 or 6 bytes for the SRS hash from the base64 character set (NOT hex values)
 SRS_ENCODE: Generate the SRS hash with the timestamp
 For exim devs: Check if srs_recipient is considered as a tainted variable since it is generated by string_sprintf.
 
-BATV/PRVS validation on the target server
+## BATV/PRVS validation on the target server
 Corp1.com may implement Bounce Address Tag Validation (BATV) (PRVS in Exim) signing for bounced emails, which would render the attack impossible since we would not be able to forge bounced emails from corp2.com.
 
 Unless we can bruteforce a valid PRVS address. In Exim, the PRVS address is composed of the following elements:
