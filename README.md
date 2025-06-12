@@ -1,7 +1,7 @@
 #  Insecure "Sender Rewriting Scheme" (SRS) implementation in Exim
 
 # Summary:
-Many exim instances acting as forwarders could be turned into open relays due to an unsafe implementation of "Sender Rewriting Scheme" (SRS).
+Many exim instances acting as forwarders could be turned into open relays due to an insecure implementation of "Sender Rewriting Scheme" (SRS).
 
 # Initial Requirements:
 
@@ -56,23 +56,38 @@ In Exim, native SRS support can be added by defining SUPPORT_SRS=yes Local/Makef
 
 The SRS implementation is in the expand.c file.
 
-Replay attack: In Exim, when encoding (and decoding) an SRS address, the SRS hash is first calculated from the "Enveloppe from" address, and then the timestamp generated. The SRS specification mentions that "The spammer cannot falsify the timestamp in an SRS address because this would cause a failure of the cryptographic check on the forwarder.". However, this requires the hash to be calculated with the timestamp. -> Therefore Exim's implementation is insecure and could be used to forge bounced mails to an user, by simply changing the timestamp of a valid SRS address. Changing the timestamp won't break the cryptographic check.
+## Replay attack
 
-Bruteforce attack: hmac_md5(sub[1], srs_recipient, cksum, sizeof(cksum)); if (Ustrncmp(cksum, sub[0] + ovec[2], 4) != 0) -> The SRS address is checked by comparing the first 4 bytes of the supplied hash with the HMAC_MD5 hash of the email local part + the SRS secret.
+In Exim, when encoding (and decoding) an SRS address, the SRS hash is first calculated from the "Enveloppe from" address, and then the timestamp generated. The SRS specification mentions that "The spammer cannot falsify the timestamp in an SRS address because this would cause a failure of the cryptographic check on the forwarder.". However, this requires the hash to be calculated with the timestamp.
+**Therefore Exim's implementation is insecure and could be used to forge bounced mails to an user, by simply changing the timestamp of a valid SRS address.** Changing the timestamp won't break the cryptographic check, but it should.
 
-However, the first 4 bytes of the hmac_md5 hash (=> the SRS hash) are insecurely generated: The character outputted hmac_md5 to build the secure hash are in the range 0123456789abcdef (hex digits). This equals to 16 possible values. 16^4 = 65536 possible hash values which is relatively easy to bruteforce compared with:
+## Bruteforce attack
+
+In expand.c:
+```c
+hmac_md5(sub[1], srs_recipient, cksum, sizeof(cksum));
+ if (Ustrncmp(cksum, sub[0] + ovec[2], 4) != 0)
+```
+The SRS address is checked by comparing the first 4 bytes of the supplied hash with the HMAC_MD5 hash of the email local part + the SRS secret.
+
+However, **the first 4 bytes of the hmac_md5 hash (=> the SRS hash) are insecurely generated**: The character outputted by hmac_md5 to build the secure hash are in the range 0123456789abcdef (hex digits). This equals to 16 possible values. 16^4 = 65536 possible hash values which is relatively easy to bruteforce compared with:
 
 4 characters of a base_64 encoded string: 64^4: 16777216.
 4 characters of a base_32 encoded string: 32^4: 1048576
- /usr/exim/bin/exim -be '${srs_encode {SRS_SECRET} {test@returnpath.com} {mta.com}}' SRS0=a201=vk=returnpath.com=test@mta.com
 
-"a201" is the SRS hash and "vk" the timestamp.
+Example: 
+```
+/usr/exim/bin/exim -be '${srs_encode {SRS_SECRET} {test@returnpath.com} {mta.com}}' 
+SRS0=a201=vk=returnpath.com=test@mta.com
+```
 
-Note: Could we get the SRS_SECRET with this method, which would make the process even easier ? Technically yes: -> Remotely bruteforce 2 SRS emails to get 2 valid [address:hash] combination and then (locally) bruteforce the hmac_md5 function to get the SRS_SECRET. This would make it easier to forge future SRS emails. However, it would take a lot of time to compute if the SRS_SECRET is very long (or if it changes regularly, but it should not).
+In this address SRS0=a201=vk=returnpath.com=test@mta.com, "a201" is the SRS hash and "vk" the timestamp.
+
+Note: We could locally bruteforce the SRS_SECRET. This would make it easier to forge future SRS emails. However, it would take a lot of time to compute if the SRS_SECRET is very long (or if it changes regularly, but it should not).
 
 What about the second point: "Hope that the forwarder's server accepts SRS inbound address from a controlled IP." ?
 
-This point is greatly dependant on the server's configuration Exim's reference implementation of SRS ( https://www.exim.org/exim-html-current/doc/html/spec_html/ch-dkim_spf_srs_and_dmarc.html) mentions the following config: inbound_srs: driver = redirect senders = : domains = +my_domains # detect inbound bounces which are SRS'd, and decode them condition = ${if inbound_srs {$local_part} {SRS_SECRET}} data = $srs_recipient
+This point is greatly dependant on the server's configuration Exim's reference implementation of [SRS]( https://www.exim.org/exim-html-current/doc/html/spec_html/ch-dkim_spf_srs_and_dmarc.html) mentions the following config: inbound_srs: driver = redirect senders = : domains = +my_domains # detect inbound bounces which are SRS'd, and decode them condition = ${if inbound_srs {$local_part} {SRS_SECRET}} data = $srs_recipient
 
 The "senders =:" refers to an empty MAIL FROM (bounce emails). This means that only messages with empty "MAIL FROM" will be forwarded. We may therefore guess that many setups are vulnerable to this attack.
 
